@@ -1,6 +1,8 @@
 # Parallel Regularized K-Means Algorithm
 This is (eventually going to be) a Julia implementation of a parallel regularized k-means algorithm described in [[1]](#1).
 
+![example](assets/example.png)
+
 ## Usage
 A case of use is shown in the file `main.jl` by running `julia --project=. main.jl`.
 ```julia

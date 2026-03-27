@@ -1,6 +1,7 @@
 module RegularizedClustering
 
 include("utils.jl")
+include("energy.jl")
 using Plots
 using ProgressBars
 
@@ -75,20 +76,6 @@ Model(data::Matrix{Float64}, λ::Float64, iter_max::Int, tol::Float64) = begin
   Model(data, clusters, colors, Inf, λ, iter_max, tol, 0)
 end
 
-function update_energy!(model)
-  energy = 0.0
-  for G in model.clusters.clusters
-    if length(G) == 0
-      continue
-    end
-    energy += model.λ / length(G)
-    for nx in G.indices
-      energy += norm(model.data[nx, :] .- G.centroid)^2
-    end
-  end
-  model.energy = energy
-end
-
 function run_model!(model::Model)
   prev_energy = update_energy!(model)
   for _ in ProgressBar(1:model.iter_max)
@@ -101,21 +88,19 @@ function run_model!(model::Model)
   end
 end
 
-function compute_ΔE(x, Gᵢ, Gⱼ, λ)
-  reg_factor, dist_factor = 0.0, 0.0
-  if length(Gᵢ) > 1
-    reg_factor += 1.0 / (length(Gᵢ) * (length(Gᵢ) - 1))
-    dist_factor -= (length(Gᵢ) / (length(Gᵢ) - 1)) * norm(x - Gᵢ.centroid)^2
-  else
-    reg_factor -= 1.0
+function merge_step!(model::Model)
+  merged = false
+  for i in 1:length(model.clusters)
+    G1 = model.clusters[i]
+    for j in i+1:length(model.clusters)
+      G2 = model.clusters[j]
+      if compute_ΔE_merge(G1, G2, model.λ) < 0
+        merge_clusters!(model.clusters, i, j, model.colors)
+        merged = true
+      end
+    end
   end
-  if length(Gⱼ) > 0
-    reg_factor -= 1.0 / (length(Gⱼ) * (length(Gⱼ) + 1))
-    dist_factor += length(Gⱼ) / (length(Gⱼ) + 1) * norm(x - Gⱼ.centroid)^2
-  else
-    reg_factor += 1
-  end
-  return λ * reg_factor + dist_factor
+  return merged
 end
 
 function perform_iteration!(model::Model)
@@ -137,9 +122,27 @@ function perform_iteration!(model::Model)
     if j == length(model.clusters)
       add_empty!(model.clusters)
     end
+    while merge_step!(model)
+      continue
+    end
   end
   model.iterations_done += 1
   nothing
+end
+
+function merge_clusters!(GG, i, j, colors)
+  G1, G2 = GG.clusters[i], GG.clusters[j]
+  G1.indices = union(G1.indices, G2.indices)
+  G2.indices = Set{Int}()
+  G1.centroid = (length(G1) .* G1.centroid .+ length(G2) .* G2.centroid) ./ (length(G1) + length(G2))
+  G2.centroid .*= 0.0
+  G1.n_points += G2.n_points
+  G2.n_points = 0
+  colors[colors.==j] .= i
+  if G1.n_points > 0
+    delete!(GG.free, i)
+  end
+  push!(GG.free, j)
 end
 
 function visualize(model::Model)
