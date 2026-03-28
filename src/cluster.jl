@@ -5,7 +5,7 @@ include("energy.jl")
 using Plots
 using ProgressBars
 
-export Model, update_energy!, run_model!, perform_iteration!, visualize
+export Model, ParallelModel, run_model!, visualize
 
 ## CLUSTER struct
 
@@ -26,10 +26,6 @@ end
 
 function Cluster(n_features::Int)
   Cluster(Set(), 0, zeros(n_features))
-end
-
-function Cluster()
-  Cluster(2)
 end
 
 ## CLUSTERS struct
@@ -145,19 +141,95 @@ function merge_clusters!(GG, i, j, colors)
   push!(GG.free, j)
 end
 
-function visualize(model::Model)
+
+## PARALLEL MODEL STRUCT
+
+mutable struct ParallelModel
+  n_threads::Int
+  data::Matrix{Float64}
+  sub_models::Vector{Model}
+  cluster_model::Union{Model,Nothing}
+  colors::Vector{Int}
+  λ_c::Float64
+  λ_g::Float64
+  iter_max::Int
+  tol::Float64
+end
+
+function ParallelModel(n_threads::Int, data::Matrix{Float64}, λ_c::Float64, λ_g::Float64, iter_max::Int, tol::Float64)
+  size_batch = Int(ceil(size(data, 1) / n_threads))
+  partition_index = Iterators.partition(1:size(data, 1), size_batch)
+  sub_models = Vector{Model}(undef, n_threads)
+  for (p, idx) in enumerate(partition_index)
+    sub_models[p] = Model(data[idx, :], λ_c, iter_max, tol)
+  end
+  colors = ones(Int, size(data, 1))
+  ParallelModel(n_threads, data, sub_models, nothing, colors, λ_c, λ_g, iter_max, tol)
+end
+
+function create_clusters_model!(p_model::ParallelModel)
+  centroids = Vector{Vector{Float64}}()
+  pointers = Vector{Tuple{Int,Int}}()
+  for (nsm, sub_model) in enumerate(p_model.sub_models)
+    for (ng, g) in enumerate(sub_model.clusters)
+      if length(g) == 0
+        continue
+      end
+      push!(pointers, (nsm, ng))
+      push!(centroids, g.centroid)
+    end
+  end
+  return collect(transpose(hcat(centroids...))), pointers
+end
+
+function run_model!(p_model::ParallelModel; parallel::Bool=false)
+  if parallel
+    Threads.@threads for sub_model in p_model.sub_models
+      run_model!(sub_model)
+    end
+  else
+    for sub_model in p_model.sub_models
+      run_model!(sub_model)
+    end
+  end
+  centroid_data, pointers = create_clusters_model!(p_model)
+  centroid_model = Model(centroid_data, p_model.λ_c, p_model.iter_max, p_model.tol)
+  run_model!(centroid_model)
+  p_model.cluster_model = centroid_model
+  for (color, centroid_cluster) in enumerate(p_model.cluster_model.clusters)
+    if length(centroid_cluster) == 0
+      continue
+    end
+    for id_cluster in centroid_cluster.indices
+      n_sm, n_g = pointers[id_cluster]
+      sub_model = p_model.sub_models[n_sm]
+      relative_index = collect(sub_model.clusters[n_g].indices)
+      sub_model.colors[relative_index] .= color
+    end
+  end
+  p_model.colors = vcat((sub_model.colors for sub_model in p_model.sub_models)...)
+  return nothing
+end
+
+
+function visualize(model::Union{Model,ParallelModel}; path::Union{String,Nothing}=nothing, colors::Union{Vector,Nothing}=nothing)
   n_features = size(model.data, 2)
   if n_features != 2
     throw("Visualization only available for 2d data.")
   end
   pl = scatter()
-  colors = Set(model.colors)
-  for c in colors
-    mask = (model.colors .=== c)
-    scatter!(pl, model.data[mask, 1], model.data[mask, 2])
+  colors = isnothing(colors) ? model.colors : colors
+  color_set = sort(collect(Set(colors)))
+  for c in color_set
+    mask = [isequal(c, cc) for cc in colors]
+    scatter!(pl, model.data[mask, 1], model.data[mask, 2], label=c)
   end
-  pl
+  if !isnothing(path)
+    savefig(pl, path)
+  end
+  return pl
 end
+
 
 end
 
