@@ -1,18 +1,18 @@
 using LinearAlgebra
 
-function compute_ΔE(x, Gᵢ, Gⱼ, λ)
+function compute_ΔE(x, Gᵢ, Gⱼ, λ, c)
   reg_factor, dist_factor = 0.0, 0.0
   if length(Gᵢ) > 1
-    reg_factor += 1.0 / (length(Gᵢ) * (length(Gᵢ) - 1))
-    dist_factor -= (length(Gᵢ) / (length(Gᵢ) - 1)) * norm(x - Gᵢ.centroid)^2
+    reg_factor += c / (length(Gᵢ) * (length(Gᵢ) - c))
+    dist_factor -= (length(Gᵢ) * c / (length(Gᵢ) - c)) * norm(x - Gᵢ.centroid)^2
   else
-    reg_factor -= 1.0
+    reg_factor -= 1 / c
   end
   if length(Gⱼ) > 0
-    reg_factor -= 1.0 / (length(Gⱼ) * (length(Gⱼ) + 1))
-    dist_factor += length(Gⱼ) / (length(Gⱼ) + 1) * norm(x - Gⱼ.centroid)^2
+    reg_factor -= c / (length(Gⱼ) * (length(Gⱼ) + c))
+    dist_factor += c * length(Gⱼ) / (length(Gⱼ) + c) * norm(x - Gⱼ.centroid)^2
   else
-    reg_factor += 1
+    reg_factor += 1 / c
   end
   return λ * reg_factor + dist_factor
 end

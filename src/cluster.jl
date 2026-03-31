@@ -4,6 +4,7 @@ include("utils.jl")
 include("energy.jl")
 using Plots
 using ProgressBars
+using DataStructures
 
 export Model, ParallelModel, run_model!, visualize
 
@@ -46,9 +47,15 @@ function add_empty!(GG::Clusters)
   push!(GG.free, length(GG))
 end
 
-function Clusters(data::Matrix{Float64})
-  data_cluster = [Cluster(data)]
-  clusters = Clusters(data_cluster, size(data, 2), Set{Int}())
+function Clusters(data::Matrix{Float64}, weight::DefaultDict{Int,Int,Int})
+  data_cluster = Cluster(data)
+  if length(weight) > 0
+    data_cluster.n_points = 0
+    for v in values(weight)
+      data_cluster.n_points += v
+    end
+  end
+  clusters = Clusters([data_cluster], size(data, 2), Set{Int}())
   add_empty!(clusters)
   return clusters
 end
@@ -59,6 +66,7 @@ mutable struct Model
   data::Matrix{Float64}
   clusters::Clusters
   colors::Vector{Int64}
+  weight::DefaultDict{Int,Int,Int}
   energy::Float64
   λ::Float64
   iter_max::Int
@@ -66,10 +74,10 @@ mutable struct Model
   iterations_done::Int64
 end
 
-Model(data::Matrix{Float64}, λ::Float64, iter_max::Int, tol::Float64) = begin
-  clusters = Clusters(data)
+Model(data::Matrix{Float64}, λ::Float64, iter_max::Int, tol::Float64; weight=DefaultDict{Int,Int,Int}(1)) = begin
+  clusters = Clusters(data, weight)
   colors = ones(Int, size(data, 1))
-  Model(data, clusters, colors, Inf, λ, iter_max, tol, 0)
+  Model(data, clusters, colors, weight, Inf, λ, iter_max, tol, 0)
 end
 
 function run_model!(model::Model)
@@ -108,7 +116,7 @@ function perform_iteration!(model::Model)
       if J == i
         continue
       end
-      ΔE_J = compute_ΔE(x, model.clusters[i], G_J, model.λ)
+      ΔE_J = compute_ΔE(x, model.clusters[i], G_J, model.λ, model.weight[nx])
       j, ΔE = ΔE_J < ΔE ? (J, ΔE_J) : (j, ΔE)
     end
     if j != i
@@ -170,6 +178,7 @@ end
 function create_clusters_model!(p_model::ParallelModel)
   centroids = Vector{Vector{Float64}}()
   pointers = Vector{Tuple{Int,Int}}()
+  weight = DefaultDict{Int,Int,Int}(1)
   for (nsm, sub_model) in enumerate(p_model.sub_models)
     for (ng, g) in enumerate(sub_model.clusters)
       if length(g) == 0
@@ -177,9 +186,10 @@ function create_clusters_model!(p_model::ParallelModel)
       end
       push!(pointers, (nsm, ng))
       push!(centroids, g.centroid)
+      weight[length(centroids)] = length(g)
     end
   end
-  return collect(transpose(hcat(centroids...))), pointers
+  return collect(transpose(hcat(centroids...))), pointers, weight
 end
 
 function run_model!(p_model::ParallelModel; parallel::Bool=false)
@@ -192,8 +202,8 @@ function run_model!(p_model::ParallelModel; parallel::Bool=false)
       run_model!(sub_model)
     end
   end
-  centroid_data, pointers = create_clusters_model!(p_model)
-  centroid_model = Model(centroid_data, p_model.λ_c, p_model.iter_max, p_model.tol)
+  centroid_data, pointers, weight = create_clusters_model!(p_model)
+  centroid_model = Model(centroid_data, p_model.λ_c, p_model.iter_max, p_model.tol; weight=weight)
   run_model!(centroid_model)
   p_model.cluster_model = centroid_model
   for (color, centroid_cluster) in enumerate(p_model.cluster_model.clusters)
