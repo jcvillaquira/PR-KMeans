@@ -18,15 +18,20 @@ end
 
 Base.length(G::Cluster) = G.n_points
 
-function Cluster(data::Matrix{Float64})
+function Cluster(data::Matrix{Float64}; init::Bool=true)
   n_points = size(data, 1)
   indices = Set{Int}(1:n_points)
-  centroid = compute_centroid(data)
+  if init
+    centroid = compute_centroid(data)
+  else
+    n_points = 0
+    centroid = zeros(Float64, size(data, 2))
+  end
   Cluster(indices, n_points, centroid)
 end
 
 function Cluster(n_features::Int)
-  Cluster(Set(), 0, zeros(n_features))
+  Cluster(Set(), 0, zeros(Float64, n_features))
 end
 
 ## CLUSTERS struct
@@ -48,12 +53,14 @@ function add_empty!(GG::Clusters)
 end
 
 function Clusters(data::Matrix{Float64}, weight::DefaultDict{Int,Int,Int})
-  data_cluster = Cluster(data)
-  if length(weight) > 0
-    data_cluster.n_points = 0
-    for v in values(weight)
-      data_cluster.n_points += v
+  weighted = length(weight) > 0
+  data_cluster = Cluster(data; init=!weighted)
+  if weighted
+    for (idx, row) in enumerate(eachrow(data))
+      data_cluster.n_points += weight[idx]
+      data_cluster.centroid .+= weight[idx] * row
     end
+    data_cluster.centroid ./= data_cluster.n_points
   end
   clusters = Clusters([data_cluster], size(data, 2), Set{Int}())
   add_empty!(clusters)
@@ -68,21 +75,24 @@ mutable struct Model
   colors::Vector{Int64}
   weight::DefaultDict{Int,Int,Int}
   energy::Float64
+  name::String
   λ::Float64
   iter_max::Int
   tol::Float64
   iterations_done::Int64
 end
 
-Model(data::Matrix{Float64}, λ::Float64, iter_max::Int, tol::Float64; weight=DefaultDict{Int,Int,Int}(1)) = begin
+Model(data::Matrix{Float64}, λ::Float64, iter_max::Int, tol::Float64; weight=DefaultDict{Int,Int,Int}(1), name="") = begin
   clusters = Clusters(data, weight)
   colors = ones(Int, size(data, 1))
-  Model(data, clusters, colors, weight, Inf, λ, iter_max, tol, 0)
+  Model(data, clusters, colors, weight, Inf, name, λ, iter_max, tol, 0)
 end
 
 function run_model!(model::Model)
+  @info "Running model $(model.name)"
   prev_energy = update_energy!(model)
-  for _ in ProgressBar(1:model.iter_max)
+  for j in ProgressBar(1:model.iter_max)
+    @info "Performing iteration $j"
     perform_iteration!(model)
     energy = update_energy!(model)
     if abs(energy - prev_energy) < model.tol
@@ -108,6 +118,9 @@ function merge_step!(model::Model)
 end
 
 function perform_iteration!(model::Model)
+  if model.name == "Centroids"
+    @bp
+  end
   for (nx, x) in enumerate(eachrow(model.data))
     ΔE = 0.0
     i = model.colors[nx]
@@ -120,7 +133,8 @@ function perform_iteration!(model::Model)
       j, ΔE = ΔE_J < ΔE ? (J, ΔE_J) : (j, ΔE)
     end
     if j != i
-      reassign_point!(x, nx, model.clusters, i => j)
+      @info "Reassignment $i => $j; ΔE: $(ΔE); src: $(model.clusters[i].centroid); tgt: $(model.clusters[j].centroid); pt: $x; w: $(model.weight[nx])"
+      reassign_point!(x, nx, model.clusters, i => j, model.weight[nx])
       model.colors[nx] = j
     end
     if j == length(model.clusters)
@@ -158,13 +172,14 @@ mutable struct ParallelModel
   sub_models::Vector{Model}
   cluster_model::Union{Model,Nothing}
   colors::Vector{Int}
+  name::String
   λ_c::Float64
   λ_g::Float64
   iter_max::Int
   tol::Float64
 end
 
-function ParallelModel(n_threads::Int, data::Matrix{Float64}, λ_c::Float64, λ_g::Float64, iter_max::Int, tol::Float64)
+function ParallelModel(n_threads::Int, data::Matrix{Float64}, λ_c::Float64, λ_g::Float64, iter_max::Int, tol::Float64; name="Parallel")
   size_batch = Int(ceil(size(data, 1) / n_threads))
   partition_index = Iterators.partition(1:size(data, 1), size_batch)
   sub_models = Vector{Model}(undef, n_threads)
@@ -172,7 +187,7 @@ function ParallelModel(n_threads::Int, data::Matrix{Float64}, λ_c::Float64, λ_
     sub_models[p] = Model(data[idx, :], λ_c, iter_max, tol)
   end
   colors = ones(Int, size(data, 1))
-  ParallelModel(n_threads, data, sub_models, nothing, colors, λ_c, λ_g, iter_max, tol)
+  ParallelModel(n_threads, data, sub_models, nothing, colors, name, λ_c, λ_g, iter_max, tol)
 end
 
 function create_clusters_model!(p_model::ParallelModel)
@@ -193,6 +208,7 @@ function create_clusters_model!(p_model::ParallelModel)
 end
 
 function run_model!(p_model::ParallelModel; parallel::Bool=false)
+  @info "Running model $(p_model.name)"
   if parallel
     Threads.@threads for sub_model in p_model.sub_models
       run_model!(sub_model)
@@ -203,7 +219,7 @@ function run_model!(p_model::ParallelModel; parallel::Bool=false)
     end
   end
   centroid_data, pointers, weight = create_clusters_model!(p_model)
-  centroid_model = Model(centroid_data, p_model.λ_c, p_model.iter_max, p_model.tol; weight=weight)
+  centroid_model = Model(centroid_data, p_model.λ_g, p_model.iter_max, p_model.tol; weight=weight, name="Centroids")
   run_model!(centroid_model)
   p_model.cluster_model = centroid_model
   for (color, centroid_cluster) in enumerate(p_model.cluster_model.clusters)
@@ -239,7 +255,6 @@ function visualize(model::Union{Model,ParallelModel}; path::Union{String,Nothing
   end
   return pl
 end
-
 
 end
 
