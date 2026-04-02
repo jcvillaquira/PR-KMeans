@@ -4,7 +4,9 @@ This is a Julia implementation of a parallel regularized k-means algorithm descr
 ![example](assets/example.png)
 
 ## Usage
-A case of use is shown in the file `main.jl` by running `julia --project=. main.jl`.
+A usage example is provided in main.jl, which can be run with `julia --project=. main.jl` or, preferably, interactively in the REPL.
+The parameter `n_threads` in the code does not determine how many processor threads are going to be used, it only determines in how many parts the data is split.
+To specify the number `n` of threads the flag `--threads=n` should be added when launching Julia.
 ```julia
 using CSV
 
@@ -24,12 +26,13 @@ run_model!(model)
 visualize(model)
 
 ## Parallel Version
-n_threads = 14
+n_threads = 8
 λ_c = 10_000.0
-λ_g = 0.1
-
-p_model = ParallelModel(n_threads, data, λ_c, λ_g, iter_max, tol)
-run_model!(p_model; parallel=true)
+λ_g = 1_000_000.0
+λ_r = 10.0
+p_model = ParallelModel(n_threads, data, λ_c, λ_g, iter_max, tol; parallel=true)
+run_model!(p_model)
+refine!(p_model, λ_r)
 visualize(p_model)
 ```
 

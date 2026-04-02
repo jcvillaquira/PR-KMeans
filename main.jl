@@ -16,11 +16,11 @@ run_model!(model)
 visualize(model)
 
 ## Parallel Version
-n_threads = 14
+n_threads = 8
 λ_c = 10_000.0
 λ_g = 1_000_000.0
-
-p_model = ParallelModel(n_threads, data, λ_c, λ_g, iter_max, tol)
-run_model!(p_model; parallel=true)
+λ_r = 10.0
+p_model = ParallelModel(n_threads, data, λ_c, λ_g, iter_max, tol; parallel=true)
+run_model!(p_model)
+refine!(p_model, λ_r)
 visualize(p_model)
-
