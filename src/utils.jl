@@ -1,4 +1,10 @@
-using LinearAlgebra
+function distance2(x, y)
+  s = zero(Float64)
+  @inbounds @simd for j in eachindex(x, y)
+    s += (x[j] - y[j])^2
+  end
+  return s
+end
 
 function compute_centroid(data)
   return reshape(sum(data; dims=1) ./ size(data, 1), :)
@@ -32,8 +38,8 @@ end
 
 function compute_γ(G1, G2, λ_r)
   a = (length(G1) + length(G2)) / ((length(G1) - 1) * (length(G2) + 1))
-  b = 2 * length(G2) * norm(G2.centroid - G1.centroid)
-  c = -λ_r / (length(G1)^2 - length(G1)) + λ_r / (length(G2)^2 + length(G2)) - length(G2) * norm(G2.centroid - G1.centroid)^2 / (length(G2) + 1)
+  b = 2 * length(G2) * sqrt(distance2(G2.centroid, G1.centroid))
+  c = -λ_r / (length(G1)^2 - length(G1)) + λ_r / (length(G2)^2 + length(G2)) - length(G2) * distance2(G2.centroid, G1.centroid) / (length(G2) + 1)
   return (-b + sqrt(b^2 - 4 * a * c)) / (2 * a)
 end
 

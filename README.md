@@ -4,7 +4,8 @@ This is a Julia implementation of a parallel regularized k-means algorithm descr
 ![example](assets/example.png)
 
 ## Usage
-A usage example is provided in main.jl, which can be run with `julia --project=. main.jl` or, preferably, interactively in the REPL.
+A usage example is provided in `main.jl`, which can be run with `julia --project=. main.jl` or, preferably, interactively in the REPL.
+
 The parameter `n_threads` in the code does not determine how many processor threads are going to be used, it only determines in how many parts the data is split.
 To specify the number `n` of threads the flag `--threads=n` should be added when launching Julia.
 ```julia
